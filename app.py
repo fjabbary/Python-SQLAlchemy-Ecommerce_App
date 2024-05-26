@@ -1,8 +1,12 @@
-from flask import Flask
+from flask import Flask, jsonify, request
 from flask_cors import CORS
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
+from marshmallow import fields, validate, ValidationError
+
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
+from sqlalchemy import select, delete
+
 from typing import List
 
 from variables import db_password
@@ -70,10 +74,106 @@ class Product(Base):
 
 
 
+with app.app_context():
+    db.create_all()
 
 
+# Creating schema for models
+class CustomerSchema(ma.Schema):
+  customer_id = fields.Integer(dump_only=True)
+  name = fields.String(required=True)
+  email = fields.String(required=True)
+  phone = fields.String(required=True)
+  
+  class Meta:
+    fields = ('customer_id', 'name', 'email', 'phone')
+  
+
+customer_schema = CustomerSchema()
+customers_schema = CustomerSchema(many=True)
 
 
+# API Routes
+# Get all customers
+@app.route('/customers', methods=['GET'])
+def get_customers():
+  query = select(Customer)
+  customers = db.session.execute(query).scalars().all()
+  
+  print(customers)
+  return customers_schema.jsonify(customers)
+
+# Get one customer
+@app.route('/customers/<int:customer_id>', methods=['GET'])
+def get_customer(customer_id):
+  query = select(Customer).filter(Customer.customer_id == customer_id)
+  customer = db.session.execute(query).scalars().first()
+  
+  print(customer)
+  return customer_schema.jsonify(customer)
+
+# Add new customer
+@app.route('/customers', methods=['POST'])
+def create_customer():
+    try:
+      customer_data = customer_schema.load(request.json)
+      
+    except ValidationError as err:  
+      return jsonify(err.messages), 400
+
+    with Session(db.engine) as session:
+        with session.begin():
+          name = customer_data['name']
+          email = customer_data['email']
+          phone = customer_data['phone']
+          
+          new_customer = Customer(name=name, email=email, phone=phone)
+          session.add(new_customer)
+          session.commit()
+    
+    return jsonify({"Message": "New customer added successfully"})
+
+
+# Update customer
+@app.route("/customers/<int:customer_id>", methods=["PUT"])
+def update_customer(customer_id):
+  with Session(db.engine) as session:
+    with session.begin():
+        query = select(Customer).filter(Customer.customer_id == customer_id)
+        customer = session.execute(query).scalars().first()
+        
+      
+
+        if customer is None:
+          return jsonify({"Message": "Customer not found"}), 404
+        
+        try:
+          customer_data = customer_schema.load(request.json)
+          print(customer)
+          print(customer_data)
+          
+        except ValidationError as err:
+          return jsonify(err.messages), 400
+        
+        for field, value in customer_data.items():
+          setattr(customer, field, value)
+
+        session.commit()
+        return jsonify({"Message": "Customer updated successfully"}), 200
+
+
+@app.route('/customers/<int:customer_id>', methods=['DELETE'])
+def delete_customer(customer_id):
+    query = delete(Customer).where(Customer.customer_id == customer_id)
+    with db.session.begin():
+      result = db.session.execute(query)
+      
+      if result.rowcount == 0:
+        return jsonify({"Message": "Customer not found"}), 404
+      
+      return jsonify({"Message": "Customer removed successfully"})
+      
+      
 
 
 
