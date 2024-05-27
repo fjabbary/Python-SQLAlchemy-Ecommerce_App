@@ -39,7 +39,6 @@ class Customer(Base):
   orders: Mapped[List["Order"]] = db.relationship("Order", back_populates="customer")
 
 
-
 class CustomerAccount(Base):
   __tablename__ = "customer_accounts"
   account_id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True)
@@ -61,6 +60,7 @@ class Order(Base):
   order_id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True)
   date: Mapped[datetime.date] = mapped_column(db.Date, nullable=False)
   customer_id: Mapped[int] = mapped_column(db.ForeignKey("customers.customer_id"))
+  status: Mapped[str] = mapped_column(db.String(255), default="pending")
   
   customer: Mapped["Customer"] = db.relationship(back_populates="orders")
   products: Mapped[List["Product"]]  = db.relationship(secondary=order_product_association)
@@ -71,12 +71,66 @@ class Product(Base):
   product_id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True)
   name: Mapped[str] = mapped_column(db.String(255), nullable=False)
   price: Mapped[float] = mapped_column(db.Float, nullable=False)
+  
+  orders = db.relationship("Order", secondary=order_product_association, back_populates="products")
+  inventory: Mapped["Inventory"] = db.relationship("Inventory", back_populates="product", uselist=False)
+  
+  
+class Inventory(Base):
+  __tablename__ = "inventory"
+  inventory_id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True)
+  product_id: Mapped[int] = mapped_column(db.ForeignKey("products.product_id"), nullable=False, unique=True)
+  quantity: Mapped[int] = mapped_column(db.Integer, nullable=False)
+    
+  product: Mapped["Product"] = db.relationship("Product", back_populates="inventory")
 
 
 
 with app.app_context():
     db.create_all()
+    
+# =========================================================
+# ======================// Schemas //======================
+# =========================================================
 
+class ProductSchema(ma.Schema):
+    product_id = fields.Integer(required=False)
+    name = fields.String(required=True, validate=validate.Length(min=1))
+    price = fields.Float(required=True, validate=validate.Range(min=0))
+
+    class Meta:
+        fields = ("product_id", "name", "price")
+
+product_schema = ProductSchema()
+products_schema = ProductSchema(many=True)
+    
+class OrderSchema(ma.Schema):
+    order_id = fields.Integer(required=False)
+    customer_id = fields.Integer(required=True)
+    date = fields.Date(required=True)
+    status = fields.String()    
+    product_id = fields.List(fields.Integer())
+    products = fields.Nested(ProductSchema, many=True)
+
+    class Meta:
+        fields = ("order_id", "customer_id", "date", "status", 'products', 'product_id')
+
+order_schema = OrderSchema()
+orders_schema = OrderSchema(many=True)
+
+
+class AccountSchema(ma.Schema):
+    account_id = fields.Integer(dump_only=True)
+    username = fields.String(required=True)
+    password = fields.String(required=True)
+    customer_id = fields.Integer(required=True)
+  
+    class Meta:
+      fields = ('account_id', 'username', 'password', 'customer_id')
+  
+
+account_schema = AccountSchema()
+accounts_schema = AccountSchema(many=True)   
 
 # Creating schema for models
 class CustomerSchema(ma.Schema):
@@ -84,14 +138,33 @@ class CustomerSchema(ma.Schema):
   name = fields.String(required=True)
   email = fields.String(required=True)
   phone = fields.String(required=True)
-  
+  orders = fields.Nested(OrderSchema, many=True)
+  customer_account = fields.Nested(AccountSchema)
+
   class Meta:
-    fields = ('customer_id', 'name', 'email', 'phone')
+    fields = ('customer_id', 'name', 'email', 'phone', 'orders', 'customer_account')
   
 
 customer_schema = CustomerSchema()
 customers_schema = CustomerSchema(many=True)
 
+
+class InventorySchema(ma.Schema):
+  inventory_id = fields.Integer(required=False)
+  product_id = fields.Integer(required=True, unique=True)
+  quantity = fields.Integer(required=True, validate=validate.Range(min=0))
+  
+  class Meta:
+    fields = ('inventory_id', 'product_id', 'quantity')
+
+inventory_schema = InventorySchema()
+inventories_schema = InventorySchema(many=True)   
+
+
+
+# =========================================================
+# ===================// Customer CRUD //===================
+# =========================================================
 
 # API Routes
 # Get all customers
@@ -141,8 +214,6 @@ def update_customer(customer_id):
     with session.begin():
         query = select(Customer).filter(Customer.customer_id == customer_id)
         customer = session.execute(query).scalars().first()
-        
-      
 
         if customer is None:
           return jsonify({"Message": "Customer not found"}), 404
@@ -173,31 +244,16 @@ def delete_customer(customer_id):
       
       return jsonify({"Message": "Customer removed successfully"})
     
-    
       
 # =============================================================================
-# ============================// Customer Accounts CRUD  //=============================
-# =============================================================================    
-class AccountSchema(ma.Schema):
-    account_id = fields.Integer(dump_only=True)
-    username = fields.String(required=True)
-    password = fields.String(required=True)
-    customer_id = fields.Integer(required=True)
-  
-    class Meta:
-      fields = ('account_id', 'username', 'password', 'customer_id')
-  
-
-account_schema = AccountSchema()
-accounts_schema = AccountSchema(many=True)   
-      
+# =======================// Customer Accounts CRUD  //=========================
+# =============================================================================          
       
 @app.route('/accounts', methods=['GET'])
 def get_accounts():
   query = select(CustomerAccount)
   accounts = db.session.execute(query).scalars().all()
   return accounts_schema.jsonify(accounts)     
-      
       
       
 @app.route('/accounts', methods=['POST'])
@@ -233,7 +289,6 @@ def update_account(account_id):
     with session.begin():
         query = select(CustomerAccount).filter(CustomerAccount.account_id == account_id)
         account = session.execute(query).scalars().first()
-      
 
         if account is None:
           return jsonify({"Message": "Account not found"}), 404
@@ -267,19 +322,6 @@ def delete_account(account_id):
 # =============================================================================
 # ============================// PRODCUTS CRUD  //=============================
 # =============================================================================
-
-class ProductSchema(ma.Schema):
-    product_id = fields.Integer(required=False)
-    name = fields.String(required=True, validate=validate.Length(min=1))
-    price = fields.Float(required=True, validate=validate.Range(min=0))
-
-    class Meta:
-        fields = ("product_id", "name", "price")
-
-product_schema = ProductSchema()
-products_schema = ProductSchema(many=True)
-
-
 
 @app.route('/products', methods=["POST"])
 def add_product():
@@ -322,7 +364,6 @@ def get_product_by_name():
     return products_schema.jsonify(products)
 
 
-
 # Get one product
 @app.route('/products/<int:product_id>', methods=['GET'])
 def get_product(product_id):
@@ -331,7 +372,6 @@ def get_product(product_id):
   
   print(product)
   return product_schema.jsonify(product)
-
 
 
 @app.route("/products/<int:product_id>", methods=["PUT"])
@@ -366,25 +406,83 @@ def delete_product(product_id):
             return jsonify({"error" "Product not found"}), 404
         
         return jsonify({"message": "Product successfully deleted!"}), 200
+      
+      
+# =============================================================================
+# =======================// PRODCUTS INVENTORY CRUD  //========================
+# =============================================================================     
 
+@app.route('/inventories', methods=["POST"])
+def add_inventory():
+    try:
+        inventory_data = inventory_schema.load(request.json)
+        
+    except ValidationError as err:
+        return jsonify(err.messages), 400
+
+    try:
+      with Session(db.engine) as session:
+          with session.begin():
+              # new_product = Product(**product_data)
+              new_inventory = Inventory(product_id=inventory_data['product_id'], quantity=inventory_data['quantity'])
+              session.add(new_inventory)
+              session.commit()
+    except:
+      return jsonify({"error": "Failed to add inventory"}), 404
+
+    return jsonify({"Message": "New inventory successfully added!"}), 201 #new resource has been created
+
+
+
+@app.route('/inventories', methods=["GET"])
+def get_inventories():
+    query = select(Inventory)
+    result = db.session.execute(query).scalars()
+    inventories = result.all()
+
+    return inventories_schema.jsonify(inventories)   
+   
+   
+
+@app.route("/inventories/<int:inventory_id>", methods=["PUT"])
+def update_inventory(inventory_id):
+    with Session(db.engine) as session:
+        with session.begin():
+            query = select(Inventory).filter(Inventory.inventory_id == inventory_id)
+            result = session.execute(query).scalar() # the same as scalars().first() - first result in the scalars object
+            
+            if result is None:
+                return jsonify({"error": "Inventory not found!"}), 404
+            inventory = result
+            try:
+                inventory_data = inventory_schema.load(request.json)
+            except ValidationError as err:
+                return jsonify(err.messages), 400
+            
+            for field, value in inventory_data.items():
+                setattr(inventory, field, value)
+
+            session.commit()
+            return jsonify({"message": "Inventory details succesfully updated!"}), 200       
+
+
+
+@app.route("/inventories/<int:inventory_id>", methods=["DELETE"])
+def delete_inventory(inventory_id):
+    delete_statement = delete(Inventory).where(Inventory.inventory_id == inventory_id)
+    try:
+        with db.session.begin():
+            result = db.session.execute(delete_statement)
+            if result.rowcount == 0:
+                return jsonify({"error" "Inventory not found"}), 404
+            
+            return jsonify({"message": "Inventory successfully deleted!"}), 200 
+    except:
+      return jsonify({"error": "Failed to delete inventory"}), 404
 
 # ============================================================
 # ===================// ORDERS CRUD //========================
 # ============================================================
-
-class OrderSchema(ma.Schema):
-    order_id = fields.Integer(required=False)
-    customer_id = fields.Integer(required=True)
-    date = fields.Date(required=True)
-    product_id = fields.List(fields.Integer())
-
-    class Meta:
-        fields = ("order_id", "customer_id", "date", "product_id")
-
-order_schema = OrderSchema()
-orders_schema = OrderSchema(many=True)
-
-
 
 @app.route("/orders", methods = ["POST"])
 def add_order():
@@ -410,6 +508,13 @@ def get_orders():
     result = db.session.execute(query).scalars()
     return orders_schema.jsonify(result)
 
+
+@app.route('/orders/<int:order_id>', methods=['GET'])
+def get_order(order_id):
+  query = select(Order).filter(Order.order_id == order_id)
+  order = db.session.execute(query).scalars().first()
+  
+  return order_schema.jsonify(order)
 
 
 @app.route('/orders/<int:order_id>', methods=["PUT"])
@@ -444,8 +549,27 @@ def delete_order(order_id):
         return jsonify({"message": "Order removed successfully"}), 200
 
 
+# ===================================================== 
+# ===================================================== 
+# ===================================================== 
 
-
+@app.route('/orders/cancel/<int:order_id>', methods=['POST'])
+def cancel_order(order_id):
+  try:
+      with db.session.begin():
+        query = select(Order).filter(Order.order_id == order_id)
+        result = db.session.execute(query).scalars().first() #first result object
+        if result is None:
+          return jsonify({"message": "Order Not Found"}), 404
+        order = result
+        print(order.status)
+        if order.status in ['pending', 'processing']:
+          order.status = "cancelled"
+          db.session.commit()
+        return jsonify({"message": "Order was successfully cancelled!"}), 200
+  except:
+    return jsonify({"message": "Failed to cancel order"}), 404
+  
 
 
 
