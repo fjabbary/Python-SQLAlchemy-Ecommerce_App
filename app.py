@@ -11,6 +11,7 @@ from typing import List
 
 from variables import db_password
 import datetime
+import re
 
 
 app = Flask(__name__)
@@ -200,11 +201,23 @@ def add_customer():
           email = customer_data['email']
           phone = customer_data['phone']
           
-          new_customer = Customer(name=name, email=email, phone=phone)
-          session.add(new_customer)
-          session.commit()
-    
-    return jsonify({"Message": "New customer added successfully"})
+          name_regex = r"[a-zA-Z0-9]{3,}"
+          email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+          phone_regex = r"^\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}$"
+          
+          valid_name = re.match(name_regex, name)
+          valid_email = re.match(email_regex, email)
+          valid_phone = re.match(phone_regex, phone)
+          
+          if (valid_name and valid_email and valid_phone):
+              new_customer = Customer(name=name, email=email, phone=phone)
+              session.add(new_customer)
+              session.commit()
+          
+          else:  
+              return jsonify({"Message": "Please enter valid name (3 characters minimum), valid email and valud phone number (e.g., 123-456-7890 or (123) 456-7890 or 1234567890) "})
+                
+    return jsonify({"Message": "New customer added successfully!"})
 
 
 # Update customer
@@ -479,6 +492,27 @@ def delete_inventory(inventory_id):
             return jsonify({"message": "Inventory successfully deleted!"}), 200 
     except:
       return jsonify({"error": "Failed to delete inventory"}), 404
+    
+    
+    
+@app.route('/inventories/restock/<int:product_id>', methods=['POST'])
+def restock_inventory(product_id):
+  try:
+    with Session(db.engine) as session:
+      with session.begin():
+        query = select(Inventory).filter(Inventory.product_id == product_id)
+        result = session.execute(query).scalars().first()
+        
+        if result.quantity <= 5:
+          result.quantity = 100
+          session.commit()
+          return jsonify({"message": "Product restocked"}), 201
+        
+        return jsonify({"message": "Product quantity is sufficient"}), 200
+      
+  except:
+    return jsonify({"error": "Failed to restock product"}), 404
+    
 
 # ============================================================
 # ===================// ORDERS CRUD //========================
@@ -569,7 +603,6 @@ def cancel_order(order_id):
         return jsonify({"message": "Order was successfully cancelled!"}), 200
   except:
     return jsonify({"message": "Failed to cancel order"}), 404
-  
 
 
 
