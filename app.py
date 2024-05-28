@@ -573,7 +573,19 @@ def cancel_order(order_id):
 
 
 
-
+@app.route('/orders/history/<int:customer_id>', methods=['GET'])
+def get_order_history(customer_id):
+  try:
+    with db.session.begin():
+      query = select(Order).filter(Order.customer_id == customer_id)
+      result = db.session.execute(query).scalars().all() 
+      if result is None:
+        return jsonify({"message": "No orders found"}), 404
+      
+      return orders_schema.jsonify(result)
+    
+  except:
+    return jsonify({"message": "Failed to get order history"}), 404
 
 
 
