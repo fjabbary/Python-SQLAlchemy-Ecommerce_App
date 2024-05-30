@@ -94,13 +94,25 @@ with app.app_context():
 # ======================// Schemas //======================
 # =========================================================
 
+class InventorySchema(ma.Schema):
+  inventory_id = fields.Integer(required=False)
+  product_id = fields.Integer(required=True, unique=True)
+  quantity = fields.Integer(required=True, validate=validate.Range(min=0))
+  
+  class Meta:
+    fields = ('inventory_id', 'product_id', 'quantity')
+
+inventory_schema = InventorySchema()
+inventories_schema = InventorySchema(many=True)   
+
 class ProductSchema(ma.Schema):
     product_id = fields.Integer(required=False)
     name = fields.String(required=True, validate=validate.Length(min=1))
     price = fields.Float(required=True, validate=validate.Range(min=0))
+    inventory = fields.Nested(InventorySchema)
 
     class Meta:
-        fields = ("product_id", "name", "price")
+        fields = ("product_id", "name", "price", "inventory")
 
 product_schema = ProductSchema()
 products_schema = ProductSchema(many=True)
@@ -133,6 +145,14 @@ class AccountSchema(ma.Schema):
 account_schema = AccountSchema()
 accounts_schema = AccountSchema(many=True)   
 
+class AccountSummarySchema(ma.Schema):
+  account_id = fields.Integer(dump_only=True)
+  username = fields.String(required=True)
+  password = fields.String(required=True)
+  
+  class Meta:
+      fields = ('account_id', 'username', 'password')
+
 # Creating schema for models
 class CustomerSchema(ma.Schema):
   customer_id = fields.Integer(dump_only=True)
@@ -140,7 +160,7 @@ class CustomerSchema(ma.Schema):
   email = fields.String(required=True)
   phone = fields.String(required=True)
   orders = fields.Nested(OrderSchema, many=True)
-  customer_account = fields.Nested(AccountSchema)
+  customer_account = fields.Nested(AccountSummarySchema)
 
   class Meta:
     fields = ('customer_id', 'name', 'email', 'phone', 'orders', 'customer_account')
@@ -148,18 +168,6 @@ class CustomerSchema(ma.Schema):
 
 customer_schema = CustomerSchema()
 customers_schema = CustomerSchema(many=True)
-
-
-class InventorySchema(ma.Schema):
-  inventory_id = fields.Integer(required=False)
-  product_id = fields.Integer(required=True, unique=True)
-  quantity = fields.Integer(required=True, validate=validate.Range(min=0))
-  
-  class Meta:
-    fields = ('inventory_id', 'product_id', 'quantity')
-
-inventory_schema = InventorySchema()
-inventories_schema = InventorySchema(many=True)   
 
 
 
@@ -567,7 +575,7 @@ def update_order(order_id):
             query = select(Order).filter(Order.order_id==order_id)
             result = session.execute(query).scalar() #first result object
             if result is None:
-                return jsonify({"message": "Product Not Found"}), 404
+                return jsonify({"message": "Order Not Found"}), 404
             order = result
             try:
                 order_data = order_schema.load(request.json)
@@ -575,7 +583,8 @@ def update_order(order_id):
                 return jsonify(err.messages), 400
             
             for field, value in order_data.items():
-                setattr(order, field, value)
+               if field != 'products':
+                  setattr(order, field, value)
 
             session.commit()
             return jsonify({"Message": "Order was successfully updated! "})
