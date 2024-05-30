@@ -64,7 +64,7 @@ class Order(Base):
   status: Mapped[str] = mapped_column(db.String(255), default="pending")
   
   customer: Mapped["Customer"] = db.relationship(back_populates="orders")
-  products: Mapped[List["Product"]]  = db.relationship(secondary=order_product_association)
+  products: Mapped[List["Product"]]  = db.relationship("Product", secondary=order_product_association, back_populates="orders")
 
 
 class Product(Base):
@@ -110,11 +110,11 @@ class OrderSchema(ma.Schema):
     customer_id = fields.Integer(required=True)
     date = fields.Date(required=True)
     status = fields.String()    
-    product_id = fields.List(fields.Integer())
-    products = fields.Nested(ProductSchema, many=True)
+    # products = fields.List(fields.Integer(), required=True)
+    products = fields.List(fields.Nested(ProductSchema))
 
     class Meta:
-        fields = ("order_id", "customer_id", "date", "status", 'products', 'product_id')
+        fields = ("order_id", "customer_id", "date", "status", 'products')
 
 order_schema = OrderSchema()
 orders_schema = OrderSchema(many=True)
@@ -529,6 +529,15 @@ def add_order():
         with session.begin():
             new_order = Order(customer_id=order_data['customer_id'], date = order_data['date'])
 
+            product_instances = []
+            for product_data in order_data['products']:
+                product_instance = session.query(Product).filter_by(product_id=product_data['product_id']).first()
+                if not product_instance:
+                    product_instance = Product(**product_data)
+                    session.add(product_instance)
+                product_instances.append(product_instance)
+            new_order.products = product_instances
+            
             session.add(new_order)
             session.commit()
 
@@ -619,19 +628,6 @@ def get_order_history(customer_id):
     
   except:
     return jsonify({"message": "Failed to get order history"}), 404
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
