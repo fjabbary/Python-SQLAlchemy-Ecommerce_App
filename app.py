@@ -63,7 +63,7 @@ class Order(Base):
   customer_id: Mapped[int] = mapped_column(db.ForeignKey("customers.customer_id"))
   status: Mapped[str] = mapped_column(db.String(255), default="pending")
   
-  customer: Mapped["Customer"] = db.relationship(back_populates="orders")
+  customer: Mapped["Customer"] = db.relationship("Customer", back_populates="orders")
   products: Mapped[List["Product"]]  = db.relationship("Product", secondary=order_product_association, back_populates="orders")
 
 
@@ -72,6 +72,8 @@ class Product(Base):
   product_id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True)
   name: Mapped[str] = mapped_column(db.String(255), nullable=False)
   price: Mapped[float] = mapped_column(db.Float, nullable=False)
+  image: Mapped[str] = mapped_column(db.String(255), nullable=False)
+  description: Mapped[str] = mapped_column(db.String(1500), nullable=False)
   
   orders = db.relationship("Order", secondary=order_product_association, back_populates="products")
   inventory: Mapped["Inventory"] = db.relationship("Inventory", back_populates="product", uselist=False)
@@ -109,10 +111,12 @@ class ProductSchema(ma.Schema):
     product_id = fields.Integer(required=False)
     name = fields.String(required=True, validate=validate.Length(min=1))
     price = fields.Float(required=True, validate=validate.Range(min=0))
+    image = fields.String(required=True, validate=validate.Length(min=1))
+    description = fields.String(required=True, validate=validate.Length(min=1))
     inventory = fields.Nested(InventorySchema)
 
     class Meta:
-        fields = ("product_id", "name", "price", "inventory")
+        fields = ("product_id", "name", "price", "image", "description")
 
 product_schema = ProductSchema()
 products_schema = ProductSchema(many=True)
@@ -355,7 +359,7 @@ def add_product():
     with Session(db.engine) as session:
         with session.begin():
             # new_product = Product(**product_data)
-            new_product = Product(name=product_data['name'], price=product_data['price'])
+            new_product = Product(name=product_data['name'], price=product_data['price'], image=product_data['image'], description=product_data['description'])
             session.add(new_product)
             session.commit()
 
@@ -593,6 +597,7 @@ def update_order(order_id):
 
 @app.route("/orders/<int:order_id>", methods=["DELETE"])
 def delete_order(order_id):
+    print(order_id)
     delete_statement = delete(Order).where(Order.order_id==order_id)
     with db.session.begin():
         result = db.session.execute(delete_statement)
